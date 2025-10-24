@@ -1,0 +1,274 @@
+document.addEventListener('DOMContentLoaded', function() {
+    // Clear form on page load/refresh
+    const form = document.getElementById('newsletterForm');
+    if (form) {
+        form.reset();
+    }
+    
+    // Get DOM elements
+    const nameInput = document.getElementById('name');
+    const phoneInput = document.getElementById('phone');
+    const formStatus = document.getElementById('form-status');
+    const nameError = document.getElementById('name-error');
+    const phoneError = document.getElementById('phone-error');
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const termsCheckbox = form.querySelector('[name="terms_agreement"]');
+    const consentCheckbox = form.querySelector('[name="monthly_newsletter_consent"]');
+    
+    // --- Validation Functions ---
+    
+    /**
+     * Validates name - must contain only letters and spaces, minimum 2 characters
+     * @param {string} name - The name to validate
+     * @returns {boolean} - True if valid, false otherwise
+     */
+    function validateName(name) {
+        const trimmed = name.trim();
+        if (trimmed.length < 2) return false;
+        return /^[a-zA-Z\s]+$/.test(trimmed);
+    }
+
+    /**
+     * Validates phone number - must be exactly 10 digits after cleaning
+     * @param {string} phone - The phone number to validate
+     * @returns {boolean} - True if valid, false otherwise
+     */
+    function validatePhone(phone) {
+        const cleaned = phone.replace(/\D/g, '');
+        return cleaned.length === 10;
+    }
+    
+    /**
+     * Removes all non-digit characters from phone number
+     * @param {string} phone - The phone number to clean
+     * @returns {string} - Cleaned phone number with only digits
+     */
+    function cleanPhoneNumber(phone) {
+        return phone.replace(/\D/g, '');
+    }
+
+    /**
+     * Displays error message and adds shake animation
+     * @param {HTMLElement} element - The error message element
+     * @param {string} message - The error message to display
+     */
+    function showError(element, message) {
+        element.textContent = message;
+        element.parentElement.classList.add('error-shake');
+        setTimeout(() => element.parentElement.classList.remove('error-shake'), 400);
+    }
+
+    /**
+     * Clears error message
+     * @param {HTMLElement} element - The error message element
+     */
+    function clearError(element) {
+        element.textContent = '';
+    }
+
+    /**
+     * Sets button loading state
+     * @param {boolean} loading - True to enable loading state, false to disable
+     */
+    function setButtonState(loading) {
+        submitBtn.disabled = loading;
+        if (loading) {
+            submitBtn.classList.add('loading');
+            submitBtn.setAttribute('aria-busy', 'true');
+        } else {
+            submitBtn.classList.remove('loading');
+            submitBtn.removeAttribute('aria-busy');
+        }
+    }
+
+    /**
+     * Highlights checkbox labels with error styling
+     * @param {HTMLElement} checkbox - The checkbox element
+     * @param {boolean} hasError - Whether to show error styling
+     */
+    function highlightCheckbox(checkbox, hasError) {
+        const label = checkbox.closest('.consent-label');
+        if (hasError) {
+            label.style.color = '#ff6b6b';
+            label.classList.add('error-shake');
+            setTimeout(() => label.classList.remove('error-shake'), 400);
+        } else {
+            label.style.color = '';
+        }
+    }
+
+    // --- Form Submission Handler ---
+    
+    if (form) {
+        form.addEventListener('submit', async function(event) {
+            event.preventDefault();
+
+            // Clear previous messages
+            formStatus.textContent = '';
+            formStatus.className = '';
+            clearError(nameError);
+            clearError(phoneError);
+            highlightCheckbox(termsCheckbox, false);
+            highlightCheckbox(consentCheckbox, false);
+
+            const rawName = nameInput.value;
+            const rawPhone = phoneInput.value;
+            const cleanedPhone = cleanPhoneNumber(rawPhone);
+
+            let isValid = true;
+
+            // Validate Name
+            if (!validateName(rawName)) {
+                showError(nameError, 'Name must contain only letters and spaces (minimum 2 characters).');
+                isValid = false;
+            }
+
+            // Validate Phone Number
+            if (!validatePhone(cleanedPhone)) {
+                showError(phoneError, 'Please enter a valid 10-digit phone number.');
+                isValid = false;
+            }
+
+            // Validate Terms Checkbox
+            if (!termsCheckbox.checked) {
+                highlightCheckbox(termsCheckbox, true);
+                formStatus.textContent = 'Please agree to the Terms and Conditions.';
+                formStatus.className = 'status-error';
+                isValid = false;
+            }
+
+            // Validate Newsletter Consent Checkbox
+            if (!consentCheckbox.checked) {
+                highlightCheckbox(consentCheckbox, true);
+                if (!formStatus.textContent) {
+                    formStatus.textContent = 'Please confirm you want to receive the newsletter.';
+                } else {
+                    formStatus.textContent = 'Please check both consent boxes to continue.';
+                }
+                formStatus.className = 'status-error';
+                isValid = false;
+            }
+            
+            // Stop if validation failed
+            if (!isValid) {
+                if (!formStatus.textContent) {
+                    formStatus.textContent = 'Please correct the errors above.';
+                    formStatus.className = 'status-error';
+                }
+                return; 
+            }
+
+            // Check honeypot field (anti-spam)
+            const honeypot = form.querySelector('[name="_gotcha"]');
+            if (honeypot && honeypot.value) {
+                // Bot detected - silently fail
+                console.log('Bot detected');
+                return;
+            }
+
+            // --- Submit Form to Google Sheets ---
+            setButtonState(true);
+            formStatus.textContent = 'Joining...';
+            formStatus.className = 'status-loading';
+
+            // Prepare form data with cleaned phone number for Google Sheets
+            const formData = new URLSearchParams();
+            formData.append('name', rawName.trim());
+            formData.append('phone', cleanedPhone);
+            formData.append('terms_agreement', termsCheckbox.value);
+            formData.append('monthly_newsletter_consent', consentCheckbox.value);
+            
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    body: formData
+                    // Note: Removed no-cors to read response for duplicate checking
+                });
+
+                const result = await response.json();
+                
+                if (result.result === 'success') {
+                    // Success
+                    formStatus.textContent = 'Welcome to GossipYah!';
+                    formStatus.className = 'status-success';
+                    form.reset();
+                } else if (result.message && result.message.includes('already registered')) {
+                    // Duplicate phone number
+                    showError(phoneError, 'This phone number is already registered.');
+                    formStatus.textContent = 'This phone number is already subscribed to our newsletter.';
+                    formStatus.className = 'status-error';
+                } else {
+                    // Other error
+                    formStatus.textContent = result.message || 'An error occurred. Please try again.';
+                    formStatus.className = 'status-error';
+                }
+                
+            } catch (error) {
+                // Network error or CORS issue - try fallback
+                // If we can't read the response, assume it worked (for no-cors scenarios)
+                if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+                    formStatus.textContent = 'Network error. Please check your connection and try again.';
+                    formStatus.className = 'status-error';
+                } else {
+                    // Assume success for CORS-related errors (fallback behavior)
+                    formStatus.textContent = 'Welcome to GossipYah!';
+                    formStatus.className = 'status-success';
+                    form.reset();
+                }
+                console.error('Form submission error:', error);
+            } finally {
+                // Always re-enable button
+                setButtonState(false);
+            }
+        });
+    }
+
+    // --- Real-time Validation (on blur) ---
+    
+    nameInput.addEventListener('blur', function() {
+        if (nameInput.value && !validateName(nameInput.value)) {
+            showError(nameError, 'Name must contain only letters and spaces.');
+        } else {
+            clearError(nameError);
+        }
+    });
+
+    phoneInput.addEventListener('blur', function() {
+        if (phoneInput.value && !validatePhone(phoneInput.value)) {
+            showError(phoneError, 'Please enter a valid 10-digit phone number.');
+        } else {
+            clearError(phoneError);
+        }
+    });
+
+    // --- Input Event Handlers ---
+    
+    // Clear error messages when user starts typing
+    nameInput.addEventListener('input', function() {
+        if (nameError.textContent) {
+            clearError(nameError);
+        }
+    });
+
+    phoneInput.addEventListener('input', function() {
+        if (phoneError.textContent) {
+            clearError(phoneError);
+        }
+        // Allow only digits, spaces, hyphens, and parentheses for user convenience
+        // These will be stripped before validation
+        this.value = this.value.replace(/[^\d\s\-\(\)]/g, '');
+    });
+
+    // Clear checkbox error styling when checked
+    termsCheckbox.addEventListener('change', function() {
+        if (this.checked) {
+            highlightCheckbox(this, false);
+        }
+    });
+
+    consentCheckbox.addEventListener('change', function() {
+        if (this.checked) {
+            highlightCheckbox(this, false);
+        }
+    });
+});
